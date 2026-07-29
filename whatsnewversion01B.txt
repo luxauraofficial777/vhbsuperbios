@@ -1,0 +1,162 @@
+================================================================================
+ WHAT'S NEW — VHB SUPER BIOS v0.1B
+ Product: Frankenstein-PSX Virtual Hypervisor BIOS
+ Release: Jul 28, 2026
+================================================================================
+
+This release introduces configurable RAM, descriptor pre-initialization,
+extended VHB memory mapping, a descriptor intercept vector, and a crash
+handler with exception vector for post-mortem debugging.
+
+
+NEW FEATURES
+---------------------------------------------------------------------------------
+
+1. CONFIGURABLE RAM SIZE (2/8/16MB)
+   --------------------------------
+   The BIOS RAM_SIZE register is now configurable at build time.
+
+   Usage:
+     python build_frankenstein_bios.py --ram-size 2
+     python build_frankenstein_bios.py --ram-size 8   (default)
+     python build_frankenstein_bios.py --ram-size 16
+
+   The build script patches the li $t3 immediate in the assembled binary
+   post-assembly, supporting three hardware configurations:
+
+     2MB  →  0x00000B88  (original PSX spec)
+     8MB  →  0x00000F88  (DuckStation extended, default)
+     16MB →  0x00001B88  (expanded hack pool)
+
+
+2. DESCRIPTOR PRE-INITIALIZATION
+   ------------------------------
+   New BIOS routine Preinit_Descriptors writes safe default values to
+   three memory locations before launching the Frankenstein payload:
+
+     *0x800F2228 = 0x80100000  (published descriptor base)
+     *0x800D9A40 = 0x80100000  (descriptor table base)
+     *0x800F2238 = 0x00000000  (descriptor index)
+
+   This prevents the DW7 EXE from reading garbage descriptor pointers
+   if HBD parsing over-allocates and the bump pointer exceeds RAM.
+
+   The routine is called on both the standard boot path and the
+   SFX-100 (SNES-CD) boot path.
+
+
+3. VHB EXTENDED MEMORY MAP
+   ------------------------
+   The Virtual Hypervisor BIOS core (vhb_core) now supports configurable
+   RAM sizes in its memory map and MMU translation layer.
+
+   - TargetProfile struct gains three new fields:
+       ram_ceiling       — max addressable RAM for descriptor clamping
+       desc_publish_addr — descriptor publish instruction address
+       desc_safe_base    — safe fallback descriptor base
+
+   - TargetProfiles::get() accepts a ram_mb parameter (default 8)
+   - SuperBIOSHypervisor constructor accepts ram_mb parameter
+   - init_memory_map() maps the full configured RAM range as cached
+     KSEG0 (0x80000000+) and uncached KSEG1 (0xA0000000+)
+   - MMU mappings adapt to the configured RAM size
+
+
+4. VHB DESCRIPTOR INTERCEPT VECTOR
+   --------------------------------
+   A new vector is registered at 0x8007AD74 (the descriptor publish
+   instruction address in the DW7 EXE).
+
+   When triggered, the intercept handler checks if $a2 (the descriptor
+   base being published) exceeds the RAM ceiling. If so, it clamps $a2
+   to the safe fallback base (0x80100000).
+
+   This provides hypervisor-level protection that works in concert with
+   the P1 EXE trampoline patch — defense in depth.
+
+
+5. BIOS CRASH HANDLER + EXCEPTION VECTOR
+   --------------------------------------
+   A general exception handler is now installed at 0xBFC00180 (the PSX
+   general exception vector).
+
+   On any unhandled exception, the handler:
+     - Saves 15 general-purpose registers ($at through $t7)
+     - Saves 4 COP0 registers (EPC, Cause, BadVAddr, Status)
+     - Writes crash magic 0xDEADCAFE to 0x801FFF4C
+     - Halts in an infinite loop
+
+   Debug area layout at 0x801FFF00 (top of 2MB RAM):
+
+     Offset  Register    Description
+     ------  --------    -----------
+     0x00    $at         assembler temporary
+     0x04    $v0         return value 0
+     0x08    $v1         return value 1
+     0x0C    $a0         argument 0
+     0x10    $a1         argument 1
+     0x14    $a2         descriptor base (key for crash analysis)
+     0x18    $a3         argument 3
+     0x1C    $t0         temporary 0
+     0x20    $t1         temporary 1
+     0x24    $t2         temporary 2
+     0x28    $t3         temporary 3
+     0x2C    $t4         temporary 4
+     0x30    $t5         temporary 5
+     0x34    $t6         temporary 6
+     0x38    $t7         temporary 7
+     0x3C    EPC         exception program counter
+     0x40    Cause       exception cause register
+     0x44    BadVAddr    bad virtual address (if address error)
+     0x48    Status      CP0 status register
+     0x4C    0xDEADCAFE  crash magic (indicates handler fired)
+
+   The VHB core also registers a corresponding vector at 0xBFC00180
+   that logs register state to console when triggered.
+
+
+BUG FIXES
+---------------------------------------------------------------------------------
+
+- Branch offset in malloc clamp trampoline corrected from +3 to +2
+  (was skipping both the clamp instruction AND the original sw)
+
+- Cross-platform _chdir/chdir wrapped in #if defined(_WIN32) for
+  MinGW compilation compatibility
+
+
+STATS
+---------------------------------------------------------------------------------
+
+  BIOS instructions:  106 → 161  (+55)
+  BIOS code size:     424 → 644 bytes  (+220)
+  BIOS image size:    512KB (unchanged)
+  BIOS SHA-256:       caa09f917aabc8b54cc9b5e9f642bb4d19bf3df3b4cf8688c09743210ef2c949
+  Clean-room checks:  6/6 PASS
+  RAM configs tested: 2MB, 8MB, 16MB — all PASS
+  C++ compilation:    g++ -std=c++17 -O2 — all files clean
+
+
+FILES MODIFIED
+---------------------------------------------------------------------------------
+
+  bioshackproject/frankenstein_bios.s      +Preinit_Descriptors, +exception_handler
+  bioshackproject/build_frankenstein_bios.py  +--ram-size, +patch_ram_size()
+  bioshackproject/vhb_core.h               +TargetProfile fields, +ram_mb param
+  bioshackproject/vhb_core.cpp             +adaptive memory map, +2 vectors
+  cybergrime/psx_binary_ops.cpp            +patch_malloc_clamp(), cross-platform fix
+  cybergrime/psx_binary_ops.h              +constants, +method declaration
+
+
+DEFENSE IN DEPTH
+---------------------------------------------------------------------------------
+
+  Layer  Component          Action
+  -----  --------           ------
+  P1     EXE trampoline     Runtime clamp in game code during HBD parsing
+  P2     BIOS pre-init      Safe defaults written before EXE starts
+  P3     VHB intercept      Hypervisor-level clamping during emulation
+  P4     Crash handler      Post-mortem diagnostics if all else fails
+
+
+================================================================================

@@ -1,0 +1,77 @@
+===============================================================================
+ VHB SUPER BIOS — VERSION DIFF LOG
+ Product: Frankenstein-PSX Virtual Hypervisor BIOS
+ Generated: Jul 28, 2026 9:46 PM UTC-04
+===============================================================================
+
+-------------------------------------------------------------------------------
+ v0.1A → v0.1B  (Jul 28, 2026)
+-------------------------------------------------------------------------------
+
+PRODUCT: Frankenstein-PSX VHB Super BIOS
+FILES:   bioshackproject/frankenstein_bios.s
+         bioshackproject/build_frankenstein_bios.py
+         bioshackproject/bios_tool.cpp
+         bioshackproject/vhb_core.h
+         bioshackproject/vhb_core.cpp
+
+ADDED:
+  P2 — Configurable RAM Size
+    - RAM_SIZE register default changed 2MB → 8MB
+    - --ram-size 2|8|16 build flag with post-assembly binary patching
+    - patch_ram_size() detects lui+ori or addiu pattern, patches immediate
+    - RAM configs: 2MB=0x00000B88, 8MB=0x00000F88, 16MB=0x00001B88
+
+  P2 — Descriptor Pre-init (Preinit_Descriptors routine)
+    - Writes safe defaults before payload launch:
+      *0x800F2228 = 0x80100000  (published descriptor base)
+      *0x800D9A40 = 0x80100000  (descriptor table base)
+      *0x800F2238 = 0x00000000  (descriptor index)
+    - Called on both standard and SFX-100 boot paths
+
+  P3 — VHB Extended Memory Map
+    - TargetProfile struct: +ram_ceiling, +desc_publish_addr, +desc_safe_base
+    - TargetProfiles::get() takes configurable ram_mb parameter
+    - SuperBIOSHypervisor constructor accepts ram_mb
+    - init_memory_map() maps full configured RAM range (not fixed 2MB)
+    - MMU mappings adapt to configured RAM size
+    - Uncached mirror (0xA0000000) sized to configured RAM
+
+  P3 — VHB Descriptor Intercept Vector
+    - Registered at 0x8007AD74 (descriptor publish instruction)
+    - Lambda captures ram_ceiling + desc_safe_base from profile
+    - Clamps $a2 (reg 6) if descriptor base >= ceiling
+    - Works in concert with P1 EXE trampoline
+
+  P4 — BIOS Crash Handler (Exception Vector at 0xBFC00180)
+    - Saves 15 GPRs ($at–$t7) to debug area at 0x801FFF00
+    - Saves 4 COP0 regs: EPC, Cause, BadVAddr, Status
+    - Writes crash magic 0xDEADCAFE at 0x801FFF4C
+    - Halts in infinite loop for debugger/watchdog pickup
+
+  P4 — VHB Exception Vector Registration
+    - Vector at 0xBFC00180 with crash dump logging
+    - Prints register state when triggered
+
+CHANGED:
+  - frankenstein_bios.s: 106 → 161 instructions (424 → 644 bytes)
+  - vhb_core.h: TargetProfile struct +3 fields, TargetProfiles::get() +ram_mb param
+  - vhb_core.cpp: constructor +ram_mb param, memory map adaptive, +2 vectors
+  - build_frankenstein_bios.py: +--ram-size flag, +patch_ram_size() function
+
+UNCHANGED:
+  - bios_tool.cpp (no changes — still pads/signs/verifies)
+  - Clean-room compliance: 6/6 checks PASS
+  - Open-source signatures: FRANK-PSX / OPEN-BIOS
+  - BIOS size: 512KB (524,288 bytes)
+
+STATS:
+  v0.1A:  106 instructions, 424 bytes, SHA-256: 85ae7ced...
+  v0.1B:  161 instructions, 644 bytes, SHA-256: caa09f91...
+  Delta:  +55 instructions, +220 bytes
+
+VERIFICATION:
+  6/6 clean-room checks PASS (all 3 RAM configs: 2/8/16MB)
+  All C++ compiles cleanly: g++ -std=c++17 -O2
+
+===============================================================================
