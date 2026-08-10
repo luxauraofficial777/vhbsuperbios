@@ -1,14 +1,91 @@
-# Project Frankenstein: Virtual Hypervisor BIOS (VHB)
+# Project Frankenstein: VHB Super BIOS V1.01A
 
 ## Product Overview
 
-The Virtual Hypervisor BIOS (VHB) is a clean-room, multi-console abstraction layer that enables custom ROM hacks and homebrew software to run on emulator platforms without relying on proprietary firmware. It provides a Soft-MMU for dynamic memory translation, a vector dispatcher for intercepting legacy BIOS calls, and a virtual file system for unified asset streaming.
+The VHB Super BIOS is a **clean-room PSX kernel** — a 512KB MIPS R3000A BIOS image built entirely from original assembly source. It contains zero proprietary code.
+
+**What the BIOS does TODAY (V1.01A blueprint, Aug 11, 2026):**
+- CP0 init (Status/Cause register setup)
+- Memory controller configuration
+- RAM clear (first 64KB sanity check)
+- SFX-100 bus probe
+- Region detection (NA/JP/EU)
+- GPU initialization (GPU_Init)
+- Interrupt controller setup (Init_Interrupt_Controller)
+- Heap management (Init_Heap)
+- Event system (Init_Events — deliver/open/close/wait/test/enable/disable)
+- Thread system (Init_Threads — openThread/closeThread/changeThread/returnFromException/getFreeTCB)
+- CD-ROM driver (CDROM_Init, CDROM_ReadSector(s), CDROM_Wait_Response, CDROM_Wait_Param)
+- SYSTEM.CNF boot-chain parser (Parse_Boot_Line, Find_File_By_Name)
+- HBD-aware boot logic (Find_HBD, skip_hbd_load, HBD remainder handling)
+- A0/B0/C0 syscall table installation (Install_Syscall_Vectors, Copy_Syscall_Tables)
+- 50+ implemented kernel services (file I/O, string/mem, heap, GPU, events, threads, CD)
+- VBlank-delivering exception handler (exception_handler, VBlank_Handler)
+- FlushCache
+
+**What the VHB Core (C++ loader shell) does TODAY:**
+- Loads and inspects ROM/ISO images
+- Parses PS-X EXE headers
+- Sets up virtual memory with Soft-MMU translation (C++ side, not in the BIOS image)
+- Registers custom vector/trap handlers
+- **V1.01A (blueprinted):** GammaLanguage v1.1C integration — A2A-DSL parser, evaluator, bytecode VM
+- **V1.01A (blueprinted):** Rust FFI bridge with PEAK-1..5 dispatch, `repr(C)` parity types
+- **V1.01A (blueprinted):** CP0 on-demand register mapping (live getters, not VBlank polling)
+- **V1.01A (blueprinted):** PSXMatrix DMA dispatch via FFI (controller-driven IRQ, no manual I_STAT)
+- **V1.01A (blueprinted):** RegisterBank thread-safe spinlock for concurrent hypervisor access
+
+**What is ROADMAP (not yet implemented):**
+- BIOS-level Soft-MMU services (currently C++ side only)
+- Commercial-emulator boot compatibility (B4 gate — **hard prerequisite for --gamma production builds**)
+- Full B5 service coverage matrix (documented gaps remain)
+- Multi-console support (SNES, Saturn, etc.) — quarantined to `_future_multibit/`
+- GammaLanguage V1.01A implementation (blueprint complete, pending B4 gate pass)
 
 The VHB is part of the Project Frankenstein toolkit, which includes:
-- **Clean-Room Super BIOS** — 512KB MIPS R3000A bootstrap, built entirely from original source
-- **VHB Core** — C++ hypervisor with Soft-MMU, vector dispatch, and VFS
-- **VHB Launcher** — CLI tool to load, inspect, and launch custom ROMs
-- **bios\_tool** — C++ binary utility for padding, signature injection, and verification
+- **VHB Super BIOS V1.01A** — 512KB MIPS R3000A clean-room kernel (~10,600 bytes of code, 50+ kernel services, GammaLanguage v1.1C ready)
+- **VHB Core** — C++ hypervisor loader shell with Soft-MMU + GammaLanguage v1.1C evaluator (blueprinted)
+- **VHB Launcher** — CLI tool to load, inspect, and launch custom ROMs with `--gamma` flag support (blueprinted)
+- **bios_tool** — C++ binary utility for padding, signature injections, and verification (7/7 checks for V1.01A)
+- **psx_core** — Minimal PSX emulator for BIOS validation only (not a full-fidelity emulator)
+- **GammaLanguage v1.1C** — A2A-DSL inline header (`A2A_Gamma.h`) with 5 new opcodes, Rust FFI types, CP0 mapping, DMA dispatch
+- **Rust FFI Bridge** — `gamma_ffi` crate with `repr(C)` parity types and PEAK-1..5 dispatch (blueprinted)
+
+### Gate Status (Aug 11, 2026)
+
+| Gate | Test | Result |
+|------|------|--------|
+| B0 | Clean-room verification (6/6 → 7/7 for V1.01A) | **PASS** (6/6 current; 7/7 blueprinted) |
+| B1 | vhb_test 2M instructions, past CDROM_Init | **PASS** |
+| B2 | BIOS + DW7 disc, 5M instrs, 8 VBlanks | **PASS** |
+| B3 | CyberGrime parity vs B2 | **PASS** (informal — identical PC) |
+| B4 | Boot in DuckStation (commercial emulator) | **FAIL** (black screen, FPS 0) — **HARD PREREQUISITE for --gamma** |
+| B5 | Service coverage matrix | **OPEN** |
+| B6 | Gamma script execution (V1.01A) | **PENDING** (blueprinted) |
+| B7 | CP0 on-demand register mapping (V1.01A) | **PENDING** (blueprinted) |
+| B8 | DMA dispatch via FFI (V1.01A) | **PENDING** (blueprinted) |
+
+**Gate B4 is a hard prerequisite** — GammaLanguage `--gamma` features cannot ship in production until DuckStation boot passes. Development/testing may use `--gamma` without B4.
+
+### GammaLanguage v1.1C Integration (V1.01A Blueprint)
+
+The V1.01A upgrade integrates GammaLanguage v1.1C into all layers of the VHB stack:
+
+| Feature | Opcode | Description |
+|---------|--------|-------------|
+| Rust FFI Zero-Copy | `RUST_OFFSET_LOAD` (0xA0) | `&RUST_OFFSET` sigil for zero-copy PSX hardware register access |
+| PEAK FFI Dispatch | `RUST_FFI_CALL` (0xA1) | Dispatch to PEAK-1..5 via function pointer table |
+| Alignment Bounds | `ALIGN_BOUND` (0xA2) | `@ALIGN_BOUND` for `repr(C)` parity between MIPS and Rust types |
+| CP0 Register Mapping | `CP0_REG_MAP` (0xA3) | Map MIPS R3000A CP0 registers into Gamma `RegisterBank` (on-demand getters) |
+| PSXMatrix DMA | `PSX_DMA_DISPATCH` (0xA4) | Dispatch PSX DMA channel via FFI (controller-driven IRQ) |
+
+**Counter Reflection Fixes Applied (Aug 10, 2026):**
+- RAM scratchpad relocated from `0x80010000` (EXE load address) → `0x80000200` (kernel reserved)
+- CP0 mapping uses on-demand C++ getters instead of stale VBlank polling
+- DMA trampoline no longer manually writes `I_STAT` — DMA controller fires IRQ naturally
+- `RegisterBank` protected with `std::atomic_flag` spinlock for thread safety
+- `RustFFIExport.DataPtr` changed to `uint64_t` (96 bytes, x64 parity with Rust `repr(C)`)
+- `PSXHwRegMap` DMA addresses corrected: CH1=`0x1F801090` (MDEC out), CH2=`0x1F8010A0` (GPU)
+- Gate B4 enforced as hard prerequisite for `--gamma` production builds
 
 ---
 
@@ -63,18 +140,19 @@ Project Frankenstein follows the same two-team separation principle:
 
 ### Verification
 
-The build pipeline includes automated clean-room compliance verification (6/6 checks):
+The build pipeline includes automated clean-room compliance verification (6/6 current, 7/7 for V1.01A):
 
 1. **Size:** 524,288 bytes (512KB) — correct PSX BIOS image size
-2. **Entry opcode:** Valid MIPS instruction (LUI or COP0)
-3. **FRANK-PSX signature:** Open-source identifier at offset 0x7FE0
-4. **OPEN-BIOS tag:** Open-source identifier at offset 0x7FF0
+2. **Entry opcode:** Valid MIPS instruction (LUI, opcode 0x0F)
+3. **OpenBIOS signature:** Open-source identifier at offset 0x0078
+4. **VHB-SUPER-BIOS signature:** `VHB-SUPER-BIOS-v1.01A` at offset 0x7FE0 (was v0.2)
 5. **No proprietary strings:** Scans entire image for `SCPH`, `Sony`, `SONY` — none found
-6. **Clean kernel area:** All bytes between bootstrap code and signature block are zero — no proprietary kernel code
+6. **Clean kernel area:** Bytes 0x2100–0x7FE0 are zero — no proprietary kernel code
+7. **Gamma signature (V1.01A):** `GAMMA-v1.1C` at offset 0x7FF0 — GammaLanguage feature tag
 
 ```bash
 # Run verification
-python bioshackproject/build_frankenstein_bios.py --verify-only
+python build_frankenstein_bios.py --verify-only
 ```
 
 ### Additional Legal Precedents
@@ -89,34 +167,69 @@ The clean-room methodology is further supported by:
 
 ## Architecture
 
+### BIOS Image (FRANKENSTEIN.BIOS)
+
 ```
-+---------------------------------------------------------------+
-|                 FRANKENSTEIN RUNTIME PAYLOAD                  |
-|        (DQ4 Assets + DW7 Engine + Expanded Text Arrays)       |
-+---------------------------------------------------------------+
-                               |
-                               v
-+---------------------------------------------------------------+
-|                    HYPERVISOR BIOS (VHB)                      |
-|  * Intercepts memory requests and translates high addresses   |
-|  * Expands heap boundaries beyond the legacy 2MB limit        |
-|  * Replaces rigid BIOS calls with dynamic allocation vectors  |
-+---------------------------------------------------------------+
-                               |
-              +----------------+----------------+
-              |                |                |
-              v                v                v
-      [ Virtual SNES ]  [ Virtual PSX ]  [ Virtual Saturn ]
+0xBFC00000  +-----------------------------------+
+            | Clean-Room Kernel (8,448 bytes)   |
+            |   ~2,112 instructions             |
+            |   - CP0 init (Status/Cause)       |
+            |   - Memory controller config      |
+            |   - RAM clear (64KB sanity)        |
+            |   - SFX-100 bus probe             |
+            |   - Region detection (NA/JP/EU)   |
+            |   - GPU_Init                      |
+            |   - Init_Interrupt_Controller     |
+            |   - Init_Heap / Init_Events       |
+            |   - Init_Threads                  |
+            |   - CD-ROM driver                 |
+            |   - SYSTEM.CNF boot parser        |
+            |   - Find_HBD (HBD boot logic)     |
+            |   - A0/B0/C0 syscall tables       |
+            |   - Exception handler + VBlank    |
+            |   - 50+ kernel services           |
+0xBFC02100  +-----------------------------------+
+            | Zero-fill (no proprietary code)   |
+            |   515,968 bytes of zeros          |
+0xBFC07FE0  +-----------------------------------+
+            | VHB-SUPER-BIOS-v0.2 (16 bytes)   |
+            | Version tag (16 bytes)            |
+0xBFC08000  +-----------------------------------+
 ```
 
-### Subsystems
+The BIOS image is a ~2,112-instruction clean-room kernel with installed A0/B0/C0 syscall tables, a CD-ROM driver, SYSTEM.CNF boot-chain parser, HBD-aware boot logic, and a VBlank-delivering exception handler.
 
-| Subsystem | Description |
-|-----------|-------------|
-| **Soft-MMU** | 64MB unified memory pool with virtual-to-physical address translation. Maps legacy 2MB RAM to extended 8MB+ pool, bypassing hardware memory ceilings. |
-| **Vector Dispatcher** | Intercepts legacy BIOS exception vectors (A/B/C syscall tables, NMI, IRQ). Redirects to custom handlers for unconstrained execution. |
-| **VFS** | Virtual File System for mounting and streaming asset bundles, bypassing CD-ROM bandwidth bottlenecks. |
-| **Target Profiles** | PSX (MIPS R3000A), SNES (65816 + SFX-100), Saturn (Dual SH-2). Each profile defines memory map, entry point, and sector format. |
+### VHB Core (C++ Loader Shell)
+
+The `vhb_core.cpp` / `vhb_core.h` files implement a C++ hypervisor that loads ROM/ISO images, parses PS-X EXE headers, and sets up a Soft-MMU with a 64MB unified memory pool. This is a host-side loader, not part of the BIOS image. It compiles clean with MSVC 19.44.
+
+### Subsystems (Current State)
+
+| Subsystem | In BIOS Image? | In C++ Shell? | Status |
+|-----------|---------------|---------------|--------|
+| Bootstrap (CP0 init, RAM clear) | Yes | N/A | Working (B1 gate passed) |
+| GPU initialization | Yes | N/A | Working (GPU_Init, GPU_dw, GPU_mem2vram, GPU_send) |
+| Interrupt controller + VBlank | Yes | N/A | Working (VBlank_Handler, exception_handler) |
+| Event system | Yes | N/A | Working (deliver/open/close/wait/test/enable/disable) |
+| Thread system | Yes | N/A | Working (openThread/closeThread/changeThread/returnFromException) |
+| Heap management | Yes | N/A | Working (malloc/free/calloc/realloc/kmalloc/kfree/InitHeap) |
+| String/memory functions | Yes | N/A | Working (strcmp/strcpy/strlen/memcpy/memset/atoi/abs/labs) |
+| File I/O | Yes | N/A | Working (open/read/write/close/lseek/printf/puts/exit) |
+| CD-ROM driver | Yes | N/A | Working (CD_init/CD_read/CD_readSync/CD_getstat/CD_seek) |
+| Syscall tables (A0/B0/C0) | Yes | N/A | Installed (Install_Syscall_Vectors, Copy_Syscall_Tables) |
+| SYSTEM.CNF boot parser | Yes | N/A | Working (Parse_Boot_Line, Find_File_By_Name) |
+| HBD boot logic | Yes | N/A | Present (Find_HBD, skip_hbd_load) |
+| Soft-MMU (64MB pool, virt-to-phys) | No | Yes | Compiles; not in BIOS |
+| GammaLanguage v1.1C (A2A-DSL) | No | Blueprinted | V1.01A: inline header `A2A_Gamma.h`, 5 new opcodes, lexer + evaluator |
+| Rust FFI Bridge (PEAK-1..5) | No | Blueprinted | V1.01A: `gamma_ffi` crate, `repr(C)` parity, zero-copy offsets |
+| CP0 Register Mapping | Boot snapshot | Blueprinted | V1.01A: on-demand getters (not VBlank polling), `0x80000200` snapshot |
+| PSXMatrix DMA Dispatch | No | Blueprinted | V1.01A: controller-driven IRQ, no manual I_STAT write |
+| VFS | No | No | Roadmap |
+| Multi-console (SNES, Saturn, etc.) | No | No | Quarantined to `_future_multibit/` |
+
+### Scope Decision (D-B)
+
+`psx_core` is scoped to **BIOS validation only**: boot BIOS, run EXE to first milestone, verify no crash. For full PSX tracing/fidelity, use the CyberGrime harness at `DQLOSTTRANSLATION/cybergrime/` (separate environment, DQ4 Frankenstein).
 
 ---
 
@@ -132,24 +245,23 @@ The clean-room methodology is further supported by:
 
 ```bash
 # Build standalone 512KB BIOS from source only (no proprietary merges)
-python bioshackproject/build_frankenstein_bios.py --region NA
+python build_frankenstein_bios.py --region NA
 
 # Force Python assembler (no external toolchain needed)
-python bioshackproject/build_frankenstein_bios.py --region NA --force-python
+python build_frankenstein_bios.py --region NA --force-python
 
 # Verify clean-room compliance
-python bioshackproject/build_frankenstein_bios.py --verify-only
+python build_frankenstein_bios.py --verify-only
 ```
 
 ### Compile C++ Utilities
 
 ```bash
 # bios_tool (binary padding, signature injection, verification)
-g++ -O2 -std=c++17 -o bioshackproject/bios_tool.exe bioshackproject/bios_tool.cpp
+g++ -O2 -std=c++17 -o bios_tool.exe bios_tool.cpp
 
 # VHB launcher
-g++ -O2 -std=c++17 -o bioshackproject/vhb_launch.exe \
-    bioshackproject/vhb_core.cpp bioshackproject/vhb_launch.cpp
+g++ -O2 -std=c++17 -o vhb_launch.exe vhb_core.cpp vhb_launch.cpp
 ```
 
 ### Launch Custom ROMs
@@ -173,7 +285,7 @@ vhb_launch.exe game.iso --target psx --vfs textures:assets.bin
 1. Copy `FRANKENSTEIN.BIOS` to your DuckStation BIOS directory
 2. Set BIOS path to `FRANKENSTEIN.BIOS` in DuckStation settings
 3. Boot the custom disc (e.g., `dq4_frankenstein_v45.bin`)
-4. Bootstrap sequence: CP0 init -> memory controller -> RAM clear -> SFX-100 probe -> region detection -> jump to `0x80100000`
+4. Boot sequence: CP0 init → memory controller → RAM clear → SFX-100 probe → region detect → GPU init → interrupt controller → heap/events/threads init → syscall table install → CD-ROM init → SYSTEM.CNF parse → EXE load → HBD locate → jump to EXE entry
 
 ---
 
@@ -181,29 +293,40 @@ vhb_launch.exe game.iso --target psx --vfs textures:assets.bin
 
 | File | Language | Description |
 |------|----------|-------------|
-| `frankenstein_bios.s` | MIPS assembly | Clean-room bootstrap source (106 instructions, 424 bytes) |
+| `frankenstein_bios.s` | MIPS assembly | Clean-room kernel source (2,601 lines, ~2,112 instructions, ~8,448 bytes) |
 | `build_frankenstein_bios.py` | Python | Hybrid build orchestrator (assemble + pack + verify) |
 | `bios_tool.cpp` | C++ | Binary utility (pad, inject, SHA-256, verify) |
-| `vhb_core.h` | C++ | VHB header (TargetSystem, SoftMMU, VectorDispatcher, VFS) |
+| `vhb_core.h` | C++ | VHB header (TargetSystem, SoftMMU, VirtualHardwareContext) |
 | `vhb_core.cpp` | C++ | VHB implementation (ROM loading, EXE parsing, memory map) |
 | `vhb_launch.cpp` | C++ | CLI launcher (load, inspect, execute) |
+| `psx_core.h` / `psx_core.cpp` | C++ | Minimal PSX emulator for BIOS validation (scoped, not full-fidelity) |
 | `FRANKENSTEIN.BIOS` | Binary | Clean-room BIOS output (512KB, zero proprietary code) |
+| `mips/` | Python | Extended MIPS assembler/disassembler (CP0, GAS directives) |
+| `cybergrime/` | Various | CyberGrime PSX harness environment (separate environment, not part of the BIOS distribution) |
+| `_future_multibit/` | Various | Quarantined multi-bit platform modules (D-A decision, see README_FUTURE.md) |
+| `archive/` | Various | Archived stale stdout/stderr logs |
 
 ---
 
-## Memory Ceiling Diagnosis
+## Memory Ceiling Diagnosis (Roadmap Context)
 
 ### Why Standard Emulators Crash with Large ROM Hacks
 
 Traditional PSX emulators enforce the original hardware's architectural limits:
 
 - **Fixed 2MB RAM:** The PSX provides 2MB main RAM. When a ROM hack grafts DQ4's asset architecture (304MB HBD) onto DW7's engine, the text arrays and asset data exceed the 2MB data segment, causing heap overflow and stack corruption.
-- **HLE Trap:** High-Level Emulation mimics system calls but still enforces the original BIOS's memory map. A syscall expecting a 2MB buffer throws an unhandled exception when it encounters a multi-megabyte text archive.
-- **8MB Wall:** Even with expansion patches, the original BIOS never mapped extended memory banks. Instructions pointing to high addresses fall into unmapped void space.
+- **HLE Trap:** High-Level Emulation mimics system calls but still enforces the original BIOS's memory map.
+- **8MB Wall:** Even with expansion patches, the original BIOS never mapped extended memory banks.
 
-### How VHB Solves This
+### How VHB Plans to Solve This (Roadmap)
 
-The VHB's Soft-MMU intercepts memory requests that would exceed the legacy 2MB ceiling, translates the high address to the extended virtual pool (up to 64MB), and feeds the data back to the engine as if it were contiguous native RAM. The vector dispatcher replaces rigid BIOS allocation calls with dynamic allocation vectors, and the VFS bypasses CD-ROM bandwidth limits for on-the-fly asset injection.
+The VHB's C++ Soft-MMU can intercept memory requests that would exceed the legacy 2MB ceiling, translate the high address to the extended virtual pool (up to 64MB), and feed the data back to the engine as if it were contiguous native RAM. **This is currently implemented in the C++ loader shell only, not in the BIOS image.** Moving Soft-MMU services into the BIOS image is a Phase 2 roadmap item per `SURGICAL_COMPLETION_VHB_CYBERGRIME_Aug3_2026.md`. The vector dispatcher and VFS are also roadmap items.
+
+### B4 Blocker: Commercial-Emulator Boot
+
+The BIOS currently boots in two in-house emulators (`psx_core` and CyberGrime) but produces a black screen (FPS 0, CPU ~5%) in DuckStation. Root-cause investigation is the primary product blocker (R3 in the repair plan). The BIOS implements a complete kernel with syscall tables, CD-ROM driver, and exception handler — the issue is likely a semantic mismatch with commercial-emulator expectations (kernel data structure layout, COP0 BEV/exception-vector delivery, or CD-ROM async timing). See `study/AUDIT_VHB_CYBERGRIME_REPAIR_UPGRADE_Aug4_2026.md` §6 R3 for the differential diagnosis plan.
+
+**Per Counter Reflection Report (Aug 10, 2026):** Gate B4 is a **hard prerequisite** for enabling `--gamma` in production builds. GammaLanguage features may be developed and tested without B4, but cannot ship until B4 passes. See `BLUEPRINT_V1.01A_GammaLanguage_v1.1C.md` for the full gate dependency chain.
 
 ---
 
