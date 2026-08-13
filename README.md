@@ -1,4 +1,4 @@
-# vhbsuperbios V100A
+# vhbsuperbios V1.1A
 <img width="1024" height="1024" alt="vhbsuperbios" src="https://github.com/user-attachments/assets/d6a1729e-fcce-4e1d-b16a-cdc47a7be37b" />
 Clean-room, multi-console hypervisor BIOS for running custom ROM hacks and homebrew on emulator platforms. Built entirely from original source code under the clean-room design methodology established by Sony v. Connectix (203 F.3d 596, 9th Cir. 2000) — zero proprietary Sony/Nintendo firmware, disassembled code, or copyrighted string tables.
 Project Frankenstein: Clean-Room Super BIOS
